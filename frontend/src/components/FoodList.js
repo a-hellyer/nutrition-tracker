@@ -16,7 +16,7 @@ import {
 } from '@chakra-ui/react';
 import { DeleteIcon, EditIcon } from '@chakra-ui/icons';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { foodService } from '../services/api';
 
 const FoodList = () => {
   const [foods, setFoods] = useState([]);
@@ -32,9 +32,9 @@ const FoodList = () => {
 
   const fetchFoods = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/food-items');
-      setFoods(response.data);
-      setLoading(false);
+      setLoading(true);
+      const data = await foodService.getAllFoods();
+      setFoods(data);
     } catch (error) {
       toast({
         title: 'Error fetching foods',
@@ -43,13 +43,14 @@ const FoodList = () => {
         duration: 3000,
         isClosable: true,
       });
+    } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (id) => {
     try {
-      await axios.delete(`http://localhost:8000/food-items/${id}`);
+      await foodService.deleteFood(id);
       toast({
         title: 'Food item deleted',
         status: 'success',

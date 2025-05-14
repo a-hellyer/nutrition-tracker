@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Box,
   VStack,
@@ -32,7 +32,7 @@ import {
   Tooltip,
 } from '@chakra-ui/react';
 import { Select } from 'chakra-react-select';
-import axios from 'axios';
+import { foodService, mealPlanService } from '../services/api';
 
 const MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
 
@@ -44,7 +44,7 @@ const DAILY_TARGETS = {
   fats: 78,     // g
 };
 
-const MacroDonut = ({ value, target, label, color }) => {
+const MacroDonut = React.memo(({ value, target, label, color }) => {
   const percentage = Math.min(Math.round((value / target) * 100), 100);
   
   return (
@@ -64,16 +64,16 @@ const MacroDonut = ({ value, target, label, color }) => {
       </Box>
     </Tooltip>
   );
-};
+});
 
-const MacroSummary = ({ meals }) => {
-  const totals = meals.reduce((acc, meal) => {
+const MacroSummary = React.memo(({ meals }) => {
+  const totals = useMemo(() => meals.reduce((acc, meal) => {
     acc.calories += meal.calories * meal.quantity;
     acc.protein += meal.protein * meal.quantity;
     acc.carbs += meal.carbohydrates * meal.quantity;
     acc.fats += meal.fats * meal.quantity;
     return acc;
-  }, { calories: 0, protein: 0, carbs: 0, fats: 0 });
+  }, { calories: 0, protein: 0, carbs: 0, fats: 0 }), [meals]);
 
   return (
     <Box p={6} borderWidth={1} borderRadius="lg" bg="white">
@@ -117,21 +117,27 @@ const MacroSummary = ({ meals }) => {
       </Box>
     </Box>
   );
-};
+});
 
-const MealSection = ({ mealType, foods, meals, onAddFood, onRemoveFood }) => {
+const MealSection = React.memo(({ mealType, foods, meals, onAddFood, onRemoveFood }) => {
   const [selectedFood, setSelectedFood] = useState(null);
   const [quantity, setQuantity] = useState(100);  // Default to 100g
 
-  const mealFoods = meals.filter(meal => meal.meal_type === mealType);
+  const mealFoods = useMemo(() => 
+    meals.filter(meal => meal.meal_type === mealType),
+    [meals, mealType]
+  );
   
-  const foodOptions = foods.map(food => ({
-    value: food.id,
-    label: food.brand && food.brand !== 'Generic' ? `${food.name} (${food.brand})` : food.name,
-    food: food
-  }));
+  const foodOptions = useMemo(() => 
+    foods.map(food => ({
+      value: food.id,
+      label: food.brand && food.brand !== 'Generic' ? `${food.name} (${food.brand})` : food.name,
+      food: food
+    })),
+    [foods]
+  );
 
-  const customStyles = {
+  const customStyles = useMemo(() => ({
     control: (provided) => ({
       ...provided,
       borderRadius: '0.375rem',
@@ -153,9 +159,9 @@ const MealSection = ({ mealType, foods, meals, onAddFood, onRemoveFood }) => {
                       state.isFocused ? 'var(--chakra-colors-gray-100)' : 'transparent',
       color: state.isSelected ? 'white' : 'inherit',
     }),
-  };
+  }), []);
 
-  const handleAdd = () => {
+  const handleAdd = useCallback(() => {
     if (selectedFood) {
       const servingRatio = quantity / 100;  // since nutritional values are per 100g
       onAddFood({ 
@@ -167,7 +173,14 @@ const MealSection = ({ mealType, foods, meals, onAddFood, onRemoveFood }) => {
       setSelectedFood(null);
       setQuantity(100);
     }
-  };
+  }, [selectedFood, quantity, mealType, onAddFood]);
+
+  const filterOption = useCallback((option, inputValue) => {
+    if (!inputValue) return true;
+    const label = option.label.toLowerCase();
+    const search = inputValue.toLowerCase();
+    return label.includes(search);
+  }, []);
 
   return (
     <Box p={4} borderWidth={1} borderRadius="lg" bg="white">
@@ -185,12 +198,7 @@ const MealSection = ({ mealType, foods, meals, onAddFood, onRemoveFood }) => {
               openMenuOnFocus={true}
               chakraStyles={customStyles}
               noOptionsMessage={() => "No foods found"}
-              filterOption={(option, inputValue) => {
-                if (!inputValue) return true;
-                const label = option.label.toLowerCase();
-                const search = inputValue.toLowerCase();
-                return label.includes(search);
-              }}
+              filterOption={filterOption}
             />
           </Box>
           <NumberInput
@@ -250,41 +258,45 @@ const MealSection = ({ mealType, foods, meals, onAddFood, onRemoveFood }) => {
       </VStack>
     </Box>
   );
-};
+});
 
 const MealPlanner = () => {
   const [foods, setFoods] = useState([]);
   const [meals, setMeals] = useState([]);
   const [planName, setPlanName] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const toast = useToast();
 
   useEffect(() => {
     const fetchFoods = async () => {
       try {
-        const response = await axios.get('http://localhost:8000/food-items');
-        setFoods(response.data);
+        setIsLoading(true);
+        const data = await foodService.getAllFoods();
+        setFoods(data);
       } catch (error) {
-        console.error('Error fetching foods:', error);
         toast({
           title: 'Error fetching foods',
+          description: error.message,
           status: 'error',
           duration: 3000,
         });
+      } finally {
+        setIsLoading(false);
       }
     };
 
     fetchFoods();
+  }, [toast]);
+
+  const handleAddFood = useCallback((food) => {
+    setMeals(prevMeals => [...prevMeals, food]);
   }, []);
 
-  const handleAddFood = (food) => {
-    setMeals([...meals, food]);
-  };
+  const handleRemoveFood = useCallback((foodToRemove) => {
+    setMeals(prevMeals => prevMeals.filter(food => food !== foodToRemove));
+  }, []);
 
-  const handleRemoveFood = (foodToRemove) => {
-    setMeals(meals.filter(food => food !== foodToRemove));
-  };
-
-  const handleSaveMealPlan = async () => {
+  const handleSaveMealPlan = useCallback(async () => {
     if (!planName) {
       toast({
         title: 'Please enter a meal plan name',
@@ -295,6 +307,7 @@ const MealPlanner = () => {
     }
 
     try {
+      setIsLoading(true);
       const mealPlanData = {
         name: planName,
         foods: meals.map(meal => ({
@@ -304,7 +317,7 @@ const MealPlanner = () => {
         })),
       };
 
-      await axios.post('http://localhost:8000/meal-plans', mealPlanData);
+      await mealPlanService.createMealPlan(mealPlanData);
       
       toast({
         title: 'Meal plan saved successfully',
@@ -316,14 +329,16 @@ const MealPlanner = () => {
       setPlanName('');
       setMeals([]);
     } catch (error) {
-      console.error('Error saving meal plan:', error);
       toast({
         title: 'Error saving meal plan',
+        description: error.message,
         status: 'error',
         duration: 3000,
       });
+    } finally {
+      setIsLoading(false);
     }
-  };
+  }, [planName, meals, toast]);
 
   return (
     <VStack spacing={6} align="stretch">
